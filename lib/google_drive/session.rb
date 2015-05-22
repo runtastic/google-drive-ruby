@@ -40,7 +40,7 @@ module GoogleDrive
           return Session.new(nil)
         end
 
-        def initialize(client_or_access_token, proxy = nil)
+        def initialize(access_information, proxy = nil)
 
           if proxy
             raise(
@@ -48,31 +48,56 @@ module GoogleDrive
                 "Specifying a proxy object is no longer supported. Set ENV[\"http_proxy\"] instead.")
           end
 
-          if client_or_access_token
+          if access_information
             api_client_params = {
               :application_name => "google_drive Ruby library",
               :application_version => "0.4.0",
             }
-            case client_or_access_token
+            case access_information
               when Google::APIClient
-                client = client_or_access_token
+                client = access_information
               when String
                 client = Google::APIClient.new(api_client_params)
-                client.authorization.access_token = client_or_access_token
+                client.authorization.access_token = access_information
               when OAuth2::AccessToken
                 client = Google::APIClient.new(api_client_params)
-                client.authorization.access_token = client_or_access_token.token
+                client.authorization.access_token = access_information.token
               when OAuth::AccessToken
                 raise(
                     ArgumentError,
                     "Passing OAuth::AccessToken to login_with_oauth is no longer supported. " +
                     "You can use OAuth1 by passing Google::APIClient.")
+              when Hash
+                ## handle service accounts
+                
+                account_email = access_information[:account_email]
+                key_file_path = access_information[:key_file_path]
+                if key_file_path.nil? || account_email.nil?
+                  raise ArgumentError,
+                    ("if you want to use service auth pease provde following info: " +
+                     " { key_file_path: path_to_your_key_file, " +
+                     "   account_email: your_account_email } ") 
+                end
+
+                client = Google::APIClient.new
+                key    = Google::APIClient::KeyUtils
+                          .load_from_pkcs12(key_file_path, "notasecret")
+                oauth2_uri = 'https://accounts.google.com/o/oauth2/token'
+                client.authorization = Signet::OAuth2::Client.new(
+                  :grant_type           => 'authorization_code',
+                  :token_credential_uri => oauth2_uri, 
+                  :audience             => oauth2_uri, 
+                  :scope                => 'https://www.googleapis.com/auth/drive',
+                  :issuer               => account_email,
+                  :signing_key          => key
+                )
+                client.authorization.fetch_access_token!
               else
                 raise(
                     ArgumentError,
-                    ("client_or_access_token is neither Google::APIClient, " +
+                    ("access_information is neither Google::APIClient, " +
                      "String nor OAuth2::AccessToken: %p") %
-                    client_or_access_token)
+                    access_information)
             end
             @fetcher = ApiClientFetcher.new(client)
           else
